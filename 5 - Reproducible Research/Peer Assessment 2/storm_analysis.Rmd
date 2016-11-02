@@ -1,0 +1,191 @@
+```{r, echo=FALSE, cache=TRUE}
+setwd("C:/Users/jjensen/Dropbox/R/Coursera - Data Science Certificate/5 - Reproducible Research/Peer Assessment 2")
+
+# ##############################
+# Storm Data Analysis
+# Author: Josh Jensen
+# 
+# 
+# Coursera / Johns Hopkins
+# Reproducible Research
+# Peer Assignment 2
+# 
+# The events in the database start in the year 1950 and end in November 2011. In the earlier years of the database there are generally fewer events recorded, most likely due to a lack of good records. More recent years should be considered more complete.
+# ##############################
+```
+# Storm Data Analysis
+### Author: Josh Jensen
+Coursera / Johns Hopkins
+Reproducible Research
+Peer Assignment 2
+
+## I. Synopsis
+Using the 'National Weather Service Storm Data' data, I investigate which types of storm events are most harmful as well as the storm type that have the greatest economic consequences.
+
+
+The data shows that tornadoes are the most deadly storm type with 5,636 recorded deaths since 1950, however this is in part due to their frequency of occurance. The most deadly storm type that the data shows is a tsunami, with a mean 1.65 deaths per storm (irrespective of severity).
+
+As well, the data shows that tornadoes are by far the worst economically, causing over $51.7B in damages since 1950. Again this is due to frequency. So if we look at a per storm average, the data shows that hurricanes cause the most damages per storm ($36.8M per storm).
+
+In conclusion, while other storm types are more damaging or fatal on average, the frequency of occurance makes tornadoes 'suck' for Americans the most.
+
+
+## II. Data Processing
+
+Load data from csv.bz2 using readr.
+
+```{r, cache=TRUE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+
+storm <- read_csv("repdata-data-StormData.csv.bz2")
+```
+
+
+## 1. Exploration
+
+To explore the data, view data and create tables of variables of interest.
+
+```{r, eval=FALSE}
+view(storm)
+
+colnames(storm)
+
+table(storm$TIME_ZONE)
+table(storm$COUNTY)
+table(storm$STATE)
+
+table(storm$EVTYPE)
+```
+
+### 2. Classify and Clean EVTYPE
+
+The critical variable EVTYPE is widely not standardized due to multiple observers. Standardizing is critical before analyzing further.
+
+The code below cleans the field to the dimensions specified in the 'National Weather Service Storm Data Documentation'.
+
+```{r, cache=TRUE}
+# force to lower and create a data frame of every distinct evtype entry
+# this is to opitmize the for loop runtime
+storm$EVTYPE <- tolower(storm$EVTYPE)
+evtype <- storm %>% 
+  select(EVTYPE) %>%
+  group_by(EVTYPE) %>%
+  count(events=EVTYPE) %>%
+  arrange(desc(n))
+
+# create a new variable that assigns a storm type base off of a grep match
+stormtypes <- c("thunderstorm|tstm","tornado","hail", "tide","avalanche|slide","blizzard","flash flood","flood|fld","wind chill","fog","smoke","drought","dust devil","dust storm","heat|warm","freeze|frost","funnel cloud","heavy rain","snow","surf","wind","hurricane|typhoon","ice","lightning","rip current","seiche","sleet","tropical","tsunami","volcanic","waterspout","wildfire","cold","winter","dry","rain|precipitation")
+
+evtype$stormtype <- NA
+
+for(i in 1:length(stormtypes)){
+  temp <- paste0("*",stormtypes[i],"*")
+  
+  evtype$temp_grep <- grepl(temp,evtype$events)
+  evtype$stormtype <- ifelse(is.na(evtype$stormtype)&evtype$temp_grep==TRUE,
+                             stormtypes[i],
+                             evtype$stormtype)
+}
+evtype$temp_grep <- NULL
+evtype$stormtype <- ifelse(is.na(evtype$stormtype),"other",evtype$stormtype)
+                           
+evtype$stormtype <- gsub("\\|.*","",evtype$stormtype)
+
+# join the created variable back to the master set
+storm <- left_join(storm, evtype , by = c("EVTYPE"="events"))
+```
+
+
+## III. Results
+
+### 1. Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+
+To answer this, let's use FATALITIES as our primary measure and look at aggregates by storm type.
+
+Absolute fatalities will show us the storm types most historically harmful; this is slanted towards the more frequent type of storms. Per storm fatalities will show how fatal any one given storm of that type is expected to be (regardless of severity).
+
+```{r, cache=TRUE}
+
+storm_deaths <- storm %>% 
+  group_by(stormtype) %>%
+  summarise(deaths = sum(FATALITIES), deathsperstorm = mean(FATALITIES))
+
+
+# top 10 storms by absolute fatalities
+storm_deaths_abs <- storm_deaths %>% filter(deaths>0) %>% arrange(desc(deaths)) %>% top_n(10,deaths)
+storm_deaths_abs
+
+# top 10 storms by per storm fatalities
+storm_deaths_perstorm <- storm_deaths %>% filter(deaths>0) %>% arrange(desc(deathsperstorm)) %>% top_n(10,deathsperstorm)
+storm_deaths_perstorm
+```
+
+Now lets view these together in a plot:
+```{r, cache=TRUE}
+storm_deaths_abs$type <- "absolute fatalities"
+storm_deaths_perstorm$type <- "per storm fatalities"
+deathsplot <- bind_rows(storm_deaths_abs,storm_deaths_perstorm)
+deathsplot$metric <- ifelse(deathsplot$type=="absolute fatalities",deathsplot$deaths,deathsplot$deathsperstorm)
+
+v1 <- ggplot(data=deathsplot, aes(x=stormtype, y=metric, fill=stormtype)) +
+  geom_bar(stat="identity",aes(order = desc(metric))) +
+  facet_grid(type ~ ., scales = "free") +
+  xlab("Storm Type") +
+  theme(axis.text.x=element_blank())
+v1
+```
+
+
+### 2. Across the United States, which types of events have the greatest economic consequences?
+
+We will evaluate this by PROPDMG. However, this variable needs to be weighted by PROPDMGEXP and cleaned first.
+
+```{r, cache=TRUE}
+# storm$PROPDMG needs to be weighted by storm$PROPDMGEXP
+storm$PROPDMGEXP <- ifelse(storm$PROPDMGEXP=="m","M",
+                           ifelse(storm$PROPDMGEXP=="K","K",
+                                  ifelse(storm$PROPDMGEXP=="M","M","0")))
+
+storm$propdmg_clean <- ifelse(storm$PROPDMGEXP=="M",storm$PROPDMG*1000000,
+                              ifelse(storm$PROPDMGEXP=="K",storm$PROPDMG*1000,
+                                     ifelse(storm$PROPDMGEXP=="0",storm$PROPDMG,NA)))
+
+```
+
+
+Now that PROPDMG is clean, we will proceed as before. This time we will use propdmg_clean as our primary measure and look at aggregates by storm type.
+
+Again absolute fatalities will show us the storm types most historically harmful and is slanted towards the more frequent type of storms. As well, per storm fatalities will show how fatal any one given storm of that type is expected to be (regardless of severity).
+
+```{r, cache=TRUE}
+storm_damages <- storm %>% 
+  group_by(stormtype) %>%
+  summarise(damages = sum(propdmg_clean), damagesperstorm = mean(propdmg_clean))
+
+
+# top 10 storms by absolute damages
+storm_damages_abs <- storm_damages %>% filter(damages>0) %>% arrange(desc(damages)) %>% top_n(10,damages)
+storm_damages_abs
+
+# top 10 storms by per storm damages
+storm_damages_perstorm <- storm_damages %>% filter(damages>0) %>% arrange(desc(damagesperstorm)) %>% top_n(10,damagesperstorm)
+storm_damages_perstorm
+```
+
+Now lets view these together in a plot:
+```{r, cache=TRUE}
+storm_damages_abs$type <- "absolute damages"
+storm_damages_perstorm$type <- "per storm damages"
+damageplot <- bind_rows(storm_damages_abs,storm_damages_perstorm)
+damageplot$metric <- ifelse(damageplot$type=="absolute damages",damageplot$damages,damageplot$damagesperstorm)
+
+v2 <- ggplot(data=damageplot, aes(x=stormtype, y=metric, fill=stormtype)) +
+  geom_bar(stat="identity",aes(order = desc(metric))) +
+  facet_grid(type ~ ., scales = "free") +
+  xlab("Storm Type") +
+  theme(axis.text.x=element_blank())
+v2
+```

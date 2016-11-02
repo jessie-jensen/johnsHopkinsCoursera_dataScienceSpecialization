@@ -1,0 +1,7 @@
+name: Publish Document
+account: rpubs
+server: rpubs.com
+bundleId:
+        https://api.rpubs.com/api/v1/document/89394/aa758e06ba2c4041b1752808f3d3a5a0
+url: http://rpubs.com/jjensen/89394
+when: 1435170469.13882
